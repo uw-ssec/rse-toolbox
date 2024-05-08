@@ -3,6 +3,7 @@ import itertools
 import json
 import os
 import zipfile
+from hashlib import sha256
 from typing import List
 
 import fsspec
@@ -75,7 +76,10 @@ def load_pdfs_to_documents(zip_file: str, flatten: bool = False) -> List[Documen
                     document_chunks = []
                     for doc in lazy_docs:
                         fname = os.path.basename(pdf_file.filename)
-                        doc.metadata.update({"source": fname})
+                        # Hash the file name string
+                        fname_hash = sha256(fname.encode("utf-8")).hexdigest()
+                        # Store the source file name as metadata
+                        doc.metadata.update({"source": fname, "source_id": fname_hash})
                         document_chunks.append(doc)
                     documents.append(document_chunks)
 

@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "torch",
+  "torch~=2.1.1",
   "fsspec"
 ]
 
@@ -39,9 +39,10 @@ dev = [
     "pre-commit",
 ]
 llms = [
-  "transformers>=4.40,<5",
+  "transformers>=4.40.1,<5",
   "huggingface-hub>=0.21.4,<1",
   "accelerate>=0.30.0,<1",
+  "llama-cpp-python>=0.2.70"
 ]
 olmo = [
   "rse-toolbox[llms]",

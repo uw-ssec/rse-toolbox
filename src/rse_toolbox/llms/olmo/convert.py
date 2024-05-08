@@ -1,17 +1,18 @@
-from typing import Any, Dict
 import gc
 import shutil
-
 from pathlib import Path
-from hf_olmo import OLMoForCausalLM
-from transformers import OlmoConfig
-from transformers import OlmoForCausalLM as TFOLMoForCausalLM
-from transformers.models.gpt_neox.tokenization_gpt_neox_fast import GPTNeoXTokenizerFast
-from transformers import AutoTokenizer
+from typing import Any, Dict
 
 import torch
+from hf_olmo import OLMoForCausalLM
+from transformers import AutoTokenizer, OlmoConfig
+from transformers import OlmoForCausalLM as TFOLMoForCausalLM
+from transformers.models.gpt_neox.tokenization_gpt_neox_fast import (  # noqa
+    GPTNeoXTokenizerFast,
+)
 
 from ...io import read_json, write_json
+
 
 def _write_tokenizer(
     input_tokenizer_dir: Path,
@@ -19,18 +20,31 @@ def _write_tokenizer(
     config: OlmoConfig,
     **kwargs,
 ) -> None:
-    print(f"Saving a {GPTNeoXTokenizerFast.__name__} to {output_tokenizer_dir}.")
+    print(
+        f"Saving a {GPTNeoXTokenizerFast.__name__} to {output_tokenizer_dir}."
+    )  # noqa
 
     base_tokenizer = AutoTokenizer.from_pretrained(input_tokenizer_dir)
     base_tokenizer_obj = base_tokenizer._tokenizer
-    
-    eos_token_id = config.eos_token_id if config.eos_token_id is not None else base_tokenizer_obj.get_vocab_size() - 1
-    pad_token_id = config.pad_token_id if config.pad_token_id is not None else eos_token_id
+
+    eos_token_id = (
+        config.eos_token_id
+        if config.eos_token_id is not None
+        else base_tokenizer_obj.get_vocab_size() - 1
+    )
+    if config.pad_token_id is not None:
+        pad_token_id = config.pad_token_id
+    else:
+        pad_token_id = eos_token_id
 
     tokenizer = GPTNeoXTokenizerFast(
         tokenizer_object=base_tokenizer_obj,
-        eos_token=base_tokenizer_obj.decode([eos_token_id], skip_special_tokens=False),
-        pad_token=base_tokenizer_obj.decode([pad_token_id], skip_special_tokens=False),
+        eos_token=base_tokenizer_obj.decode(
+            [eos_token_id], skip_special_tokens=False
+        ),  # noqa
+        pad_token=base_tokenizer_obj.decode(
+            [pad_token_id], skip_special_tokens=False
+        ),  # noqa
         unk_token=None,
         bos_token=None,
         chat_template=base_tokenizer.chat_template,
@@ -39,16 +53,17 @@ def _write_tokenizer(
 
     tokenizer.save_pretrained(output_tokenizer_dir)
 
+
 def to_hf(
     input_model_dir: str | Path,
     output_model_dir: str | Path,
     safe_serialization: bool = True,
-    fix_eos_token_id=True
+    fix_eos_token_id=True,
 ) -> None:
     """
     Converts an OLMo model to the new Hugging Face Transformers format,
     which supports transformers >= 4.40.
-    
+
     Original code from https://github.com/allenai/OLMo/blob/main/scripts/convert_olmo_to_hf_new.py
 
     Parameters
@@ -59,7 +74,8 @@ def to_hf(
         The directory where the new Hugging Face version
         of the model will be stored.
     safe_serialization : bool, optional
-        Whether to save the model using `safetensors` or the traditional PyTorch way (that uses `pickle`).
+        Whether to save the model using `safetensors`
+        or the traditional PyTorch way (that uses `pickle`).
     fix_eos_token_id : bool, optional
         Whether to fix the eos token id from 0 to 50279.
     """
@@ -72,17 +88,19 @@ def to_hf(
     # Create temporary directory
     tmp_model_path = output_model_dir / "tmp"
     tmp_model_path.mkdir(parents=True, exist_ok=True)
-    
+
     # Load the original OLMO config
     olmo_config = read_json(input_model_dir / "config.json")
-    
+
     # Fetch all the parameters
     n_layers = olmo_config["n_layers"]
     n_heads = olmo_config["n_heads"]
     dim = olmo_config["d_model"]
     dims_per_head = dim // n_heads
     base = 10000.0
-    inv_freq = 1.0 / (base ** (torch.arange(0, dims_per_head, 2).float() / dims_per_head))
+    inv_freq = 1.0 / (
+        base ** (torch.arange(0, dims_per_head, 2).float() / dims_per_head)
+    )
     max_position_embeddings = olmo_config["max_sequence_length"]
 
     vocab_size = olmo_config.get("embedding_size", olmo_config["vocab_size"])
@@ -96,18 +114,18 @@ def to_hf(
 
     # TODO: Change print to logger
     print(f"Fetching all parameters from the checkpoint at {input_model_dir}.")
-    
+
     # Load the original model
     olmo = OLMoForCausalLM.from_pretrained(input_model_dir)
-    
+
     # Retrieve the state dictionary
     # Not sharded
     loaded: Dict[str, torch.Tensor] = olmo.model.state_dict()
-    
+
     # Free up memory
     del olmo
     gc.collect()
-    
+
     # Create new sharded model
     # TODO: Change print to logger
     print("Creating hf version of model layers.")
@@ -119,16 +137,18 @@ def to_hf(
         # Unsharded
         # TODO: Layernorm stuff
         # TODO: multi query attention
-        fused_dims = [dim, dims_per_head * num_key_value_heads, dims_per_head * num_key_value_heads]
+        fused_dims = [
+            dim,
+            dims_per_head * num_key_value_heads,
+            dims_per_head * num_key_value_heads,
+        ]
         q_proj_weight, k_proj_weight, v_proj_weight = torch.split(
             loaded[f"transformer.blocks.{layer_i}.att_proj.weight"], fused_dims, dim=0
         )
         up_proj_weight, gate_proj_weight = torch.chunk(
             loaded[f"transformer.blocks.{layer_i}.ff_proj.weight"], 2, dim=0
         )
-        o_proj_weight = loaded[
-            f"transformer.blocks.{layer_i}.attn_out.weight"
-        ]
+        o_proj_weight = loaded[f"transformer.blocks.{layer_i}.attn_out.weight"]
         down_proj_weight = loaded[f"transformer.blocks.{layer_i}.ff_out.weight"]
         state_dict = {
             f"model.layers.{layer_i}.self_attn.q_proj.weight": q_proj_weight,
@@ -148,8 +168,8 @@ def to_hf(
         # TODO: Change print to logger
         print(f"Saving {filename}.")
         torch.save(state_dict, output_file)
-    
-    # Create last shard    
+
+    # Create last shard
     filename = f"pytorch_model-{n_layers + 1}-of-{n_layers + 1}.bin"
     output_file = tmp_model_path / filename
     # Unsharded
@@ -166,12 +186,12 @@ def to_hf(
         param_count += v.numel()
     print(f"Saving {filename}.")
     torch.save(state_dict, output_file)
-    
+
     # Make space so we can load the model properly now.
     del state_dict
     del loaded
     gc.collect()
-    
+
     # Create the new config
     # Write configs
     index_dict["metadata"] = {"total_size": param_count * 2}
@@ -204,21 +224,23 @@ def to_hf(
         clip_qkv=olmo_config.get("clip_qkv"),
     )
     config.save_pretrained(tmp_model_path)
-    
+
     # Write the tokenizer
     _write_tokenizer(input_model_dir, output_model_dir, config)
-    
+
     # Loading the new hf version of the model and saving it
     # TODO: Change print to logger
     print("Loading the checkpoint in a OLMo model.")
-    model = TFOLMoForCausalLM.from_pretrained(tmp_model_path, torch_dtype=torch.float32, low_cpu_mem_usage=True)
+    model = TFOLMoForCausalLM.from_pretrained(
+        tmp_model_path, torch_dtype=torch.float32, low_cpu_mem_usage=True
+    )
     # Avoid saving this as part of the config.
     del model.config._name_or_path
     print("Saving in the Transformers format.")
     model.save_pretrained(output_model_dir, safe_serialization=safe_serialization)
     shutil.rmtree(tmp_model_path)
     print("Successfully converted the model.")
-    
-    
+
+
 def to_gguf() -> None:
     ...

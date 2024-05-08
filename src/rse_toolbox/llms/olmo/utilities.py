@@ -47,7 +47,7 @@ def create_prompt_with_olmo_chat_format(
             )
         else:
             raise ValueError(
-                "Olmo chat template only supports 'system', 'user' and 'assistant' roles."
+                "Olmo chat template only supports 'system', 'user' and 'assistant' roles. "
                 f"Invalid role: {message['role']}."
             )
     formatted_text += "<|assistant|>\n"
